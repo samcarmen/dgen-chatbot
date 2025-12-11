@@ -1,0 +1,38 @@
+config:
+  gcp:project: dgen-chatbot
+  input:bucket: pulumi-dgen
+  input:resource:
+    iam_member:
+      account_id: serviceAccount:service-{GCP_PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com
+      resource_name: agent-engine-sa
+      roles:
+        - id: roles/secretmanager.secretAccessor
+        - id: roles/storage.objectAdmin
+          condition:
+            expression: resource.service == "storage.googleapis.com" && resource.name.startsWith("projects/_/buckets/dgen-agent-engine")
+            title: View, update and delete objects in dgen-agent-engine bucket.
+        - id: roles/run.invoker
+    cloud_storage:
+      lifecycle_rule:
+        - action:
+            type: Delete
+          condition:
+            age: 31
+      locations:
+        - asia-southeast1
+      name: dgen-agent-engine
+      public_access_prevention: enforced
+      storage_class: STANDARD
+      uniform_bucket_level_access: true
+      force_destroy: true
+    firestore:
+      name: chatbot-memory
+      description: Firestore for persisting chatbot conversation history
+      region: asia-southeast1
+      type: FIRESTORE_NATIVE
+      concurrency_mode: OPTIMISTIC # Assume rare transaction conflicts
+      app_engine_integration_mode: DISABLED # No App Engine integration
+      point_in_time_recovery_enablement: POINT_IN_TIME_RECOVERY_ENABLED # PITR enabled
+      delete_protection_state: DELETE_PROTECTION_DISABLED # Deletion allowed
+      deletion_policy: DELETE # Deletes from GCP and Pulumi state
+  input:environment: sandbox
