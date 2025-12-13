@@ -40,25 +40,25 @@ jobs:
           secrets: |
             SMTP_PASSWORD:projects/${{ vars.GCP_PROJECT_ID }}/secrets/SMTP_PASSWORD/versions/latest
 
-      - name: "Initialize Pulumi dependencies for infra"
-        working-directory: ./deployment/infra
-        run: |
-          cd pulumi && pulumi install
+      # - name: "Initialize Pulumi dependencies for infra"
+      #   working-directory: ./deployment/infra
+      #   run: |
+      #     cd pulumi && pulumi install
 
-      - name: "Provision infra"
-        uses: pulumi/actions@v6
-        env:
-          GCP_PROJECT_NUMBER: ${{ secrets.GCP_PROJECT_NUMBER }}
-          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
-        with:
-          command: up
-          cloud-url: gs://${{ vars.PULUMI_BUCKET }}/infra
-          work-dir: ./deployment/infra/pulumi
-          stack-name: organization/infra/${{ vars.ENVIRONMENT }}
-          upsert: true
-          comment-on-pr: true
-          edit-pr-comment: false
-          refresh: true
+      # - name: "Provision infra"
+      #   uses: pulumi/actions@v6
+      #   env:
+      #     GCP_PROJECT_NUMBER: ${{ secrets.GCP_PROJECT_NUMBER }}
+      #     PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+      #   with:
+      #     command: up
+      #     cloud-url: gs://${{ vars.PULUMI_BUCKET }}/infra
+      #     work-dir: ./deployment/infra/pulumi
+      #     stack-name: organization/infra/${{ vars.ENVIRONMENT }}
+      #     upsert: true
+      #     comment-on-pr: true
+      #     edit-pr-comment: false
+      #     refresh: true
 
       - name: "Install dependencies"
         run: uv sync --frozen
