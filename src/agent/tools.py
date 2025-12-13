@@ -9,8 +9,6 @@ from typing import Any, Dict, Iterable
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools import BaseTool
 
-EMAIL_FROM = "no-reply@dgentech.io"
-
 
 def before_tool(
     tool: BaseTool,
@@ -68,6 +66,8 @@ def send_escalation_email(
 
     Returns a confirmation message for the user.
     """
+    EMAIL_FROM = "no-reply@dgentech.io"
+    EMAIL_TO = "support@dgentech.io"
     SMTP_HOST = os.environ["SMTP_HOST"]
     SMTP_PORT = os.environ["SMTP_PORT"]
     SMTP_USER = os.environ["SMTP_USER"]
@@ -98,7 +98,7 @@ CONVERSATION HISTORY
 
     msg = MIMEMultipart()
     msg["From"] = EMAIL_FROM
-    msg["To"] = user_email
+    msg["To"] = EMAIL_TO
     msg["Subject"] = subject
 
     msg.attach(MIMEText(body, "plain"))
