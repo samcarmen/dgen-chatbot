@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "entrypoint"
+version = "1.0.0"
+description = "This project provides a Cloud Function that acts as an entrypoint for chatbot widget"
+requires-python = "~=3.13.0"
+dependencies = [
+    "flask>=3.1.0",
+    "google-adk[eval]>=1.17.0",
+    "google-cloud-logging>=3.12.0",
+    "google-cloud-aiplatform>=1.124.0",
+    "google-cloud-firestore>=2.21.0",
+    "pydantic-settings>=2.9.1",
+    "requests>=2.32.4",
+]
+
+[dependency-groups]
+release = ["pulumi>=3.191.0", "pulumi-docker>=4.5.6", "pulumi-gcp>=8.38.0"]
+
+[tool.uv]
+default-groups = "all"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
