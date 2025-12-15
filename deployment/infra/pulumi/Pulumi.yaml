@@ -1,7 +1,0 @@
-name: infra
-runtime:
-  name: python
-  options:
-    toolchain: uv
-    virtualenv: .venv
-description: Provision GCP services used by agent

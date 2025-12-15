@@ -18,7 +18,7 @@ jobs:
   deploy-agent:
     if: ${{ github.event.inputs.deployment_type == 'agent' }}
     runs-on: ubuntu-latest
-    environment: dev
+    environment: production
     permissions:
       id-token: write
       contents: read
@@ -91,7 +91,7 @@ jobs:
   deploy-cloud-run:
     if: ${{ github.event.inputs.deployment_type == 'cloud-run' }}
     runs-on: ubuntu-latest
-    environment: dev
+    environment: production
     permissions:
       id-token: write
       contents: read

@@ -99,7 +99,6 @@ def provision_cloud_functions(
                 description=cloud_function["description"],
                 labels={
                     "component": label_config.require("component"),
-                    "epic": label_config.require("epic"),
                     "version": input_config.require("version").replace(".", "-"),
                 },
                 location=location,
@@ -142,7 +141,6 @@ def provision_cloud_functions(
                     environment_variables={
                         "COMPONENT": label_config.require("component"),
                         "ENVIRONMENT": input_config.require("environment"),
-                        "EPIC": label_config.require("epic"),
                         "GCP_PROJECT_ID": gcp_config.require("project"),
                         "GCP_REGION": location,
                         "GCP_REGION_ABBREV": get_location_abbreviation(location),

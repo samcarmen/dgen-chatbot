@@ -107,16 +107,16 @@ CONVERSATION HISTORY
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
             server.starttls()
             server.login(SMTP_USER, smtp_password)
-            server.sendmail(EMAIL_FROM, user_email, msg.as_string())
+            server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
 
         return (
-            f"✅ Your issue has been successfully sent to our support team. "
+            f"Your issue has been successfully sent to our support team. "
             f"They will respond to you at **{user_email}** shortly."
         )
 
     except Exception as e:
         print(f"SMTP Error: {e}")
         return (
-            "⚠️ I encountered a problem sending your request to support. "
+            "I encountered a problem sending your request to support. "
             "Please try again later."
         )
