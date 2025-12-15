@@ -25,6 +25,9 @@ def load_config() -> DeploymentConfig:
         "GOOGLE_CLOUD_PROJECT",
         "GOOGLE_CLOUD_LOCATION",
         "VERTEX_ENGINE_STAGING_BUCKET",
+        "SMTP_HOST",
+        "SMTP_PORT",
+        "SMTP_USER",
         "SMTP_PASSWORD",
     ]
     missing = [key for key in required_keys if key not in os.environ]
@@ -36,7 +39,12 @@ def load_config() -> DeploymentConfig:
         project_id=os.environ["GOOGLE_CLOUD_PROJECT"],
         location=os.environ["GOOGLE_CLOUD_LOCATION"],
         staging_bucket=os.environ["VERTEX_ENGINE_STAGING_BUCKET"],
-        env_vars={"SMTP_PASSWORD": os.environ["SMTP_PASSWORD"]},
+        env_vars={
+            "SMTP_HOST": os.environ["SMTP_HOST"],
+            "SMTP_PORT": os.environ["SMTP_PORT"],
+            "SMTP_USER": os.environ["SMTP_USER"],
+            "SMTP_PASSWORD": os.environ["SMTP_PASSWORD"],
+        },
     )
 
 
