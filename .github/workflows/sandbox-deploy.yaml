@@ -1,13 +1,13 @@
-name: Sandbox Deploy
-run-name: Deploy to sandbox
+name: Dev Deploy
+run-name: Deploy to dev
 on:
   pull_request:
     types: [labeled]
 jobs:
   deploy-agent:
-    if: ${{ github.event.label.name == 'sandbox deploy agent' }}
+    if: ${{ github.event.label.name == 'dev deploy agent' }}
     runs-on: ubuntu-latest
-    environment: sandbox
+    environment: dev
     permissions:
       id-token: write
       contents: read
@@ -57,9 +57,9 @@ jobs:
           uv run --no-sync python deployment/agent/core.py --action=up
 
   deploy-cloud-run:
-    if: ${{ github.event.label.name == 'sandbox deploy cloud function' }}
+    if: ${{ github.event.label.name == 'dev deploy cloud function' }}
     runs-on: ubuntu-latest
-    environment: sandbox
+    environment: dev
     permissions:
       id-token: write
       contents: read

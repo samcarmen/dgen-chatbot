@@ -51,5 +51,5 @@ config:
             version: latest
         locations:
           - asia-southeast1
-  input:environment: sandbox
+  input:environment: dev
   label:component: agent

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     )  # pyright: ignore
 
     VERSION: str = "v1"
-    ENVIRONMENT: str = "sandbox"
+    ENVIRONMENT: str = "dev"
 
     GCP_PROJECT_ID: str = "dgen-chatbot"
     AGENT_ENGINE_REGION: str = "us-central1"
