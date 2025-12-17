@@ -178,7 +178,7 @@ def send_escalation_email(
     masked_email = _mask_email(sanitized_email)
     logger.info(
         msg={
-            "event": "Email escalation tool invoked.",
+            "event": "escalation_email_invoked",
             "payload": {
                 "user_email": masked_email,
                 "issue_summary": issue_summary,
@@ -215,7 +215,7 @@ def send_escalation_email(
 
         logger.info(
             msg={
-                "event": "Escalation email sent successfully.",
+                "event": "escalation_email_sent",
                 "payload": {"user_email": masked_email},
             }
         )
@@ -226,17 +226,18 @@ def send_escalation_email(
 
     except Exception as e:
         error_type = e.__class__.__name__
-        logger.warning(
+        logger.error(
             msg={
-                "event": "Escalation email failed to be sent.",
+                "event": "escalation_email_failed",
                 "payload": {
                     "user_email": masked_email,
                     "error_type": error_type,  # avoid logging sensitive error messages/creds
                 },
-            }
+            },
+            exc_info=True,
         )
 
         return (
-            "I encountered a problem sending your request to support. "
-            "Please try again later or contact us on Telegram."
+            "We couldn't submit your request to support at the moment. "
+            "Please try again in a few minutes or contact us on our Telegram channel."
         )

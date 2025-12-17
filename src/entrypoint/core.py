@@ -26,7 +26,6 @@ from utils.settings import Settings
 class WidgetRequestContext:
     message: str
     session_id: str
-    org_id: str
     user_id: str
     metadata: Dict[str, Any]
     adk_user_id: str
@@ -57,7 +56,6 @@ def _get_or_create_engine_session(
     collection: str,
     session_id: str,
     adk_user_id: str,
-    org_id: str,
     settings: Settings,
 ) -> str:
     engine_session_id = lookup_session_id(
@@ -67,7 +65,7 @@ def _get_or_create_engine_session(
     )
     logging.info(
         msg={
-            "event": "Firestore session lookup",
+            "event": "firestore_session_lookup",
             "payload": {
                 "session_id": session_id,
                 "engine_session_id": engine_session_id,
@@ -79,19 +77,12 @@ def _get_or_create_engine_session(
         return engine_session_id
 
     session = agent.create_session(  # type: ignore
-        user_id=adk_user_id,
-        state={
-            "temperature": settings.TEMPERATURE,
-            "top_p": settings.TOP_P,
-            "top_k": settings.TOP_K,
-            "max_output_tokens": settings.MAX_OUTPUT_TOKENS,
-            "org_id": org_id,
-        },
+        user_id=adk_user_id
     )
     engine_session_id = session["id"]
     logging.info(
         msg={
-            "event": "Created new agent engine session",
+            "event": "agent_engine_session_created",
             "payload": {"engine_session_id": engine_session_id},
         }
     )
@@ -103,7 +94,6 @@ def _persist_session_mapping(
     collection: str,
     session_id: str,
     engine_session_id: str,
-    org_id: str,
     user_id: str,
     metadata: Dict[str, Any],
 ) -> None:
@@ -113,7 +103,6 @@ def _persist_session_mapping(
         doc_id=session_id,
         payload={
             "engine_session_id": engine_session_id,
-            "org_id": org_id,
             "user_id": user_id,
             "metadata": metadata,
             "updated_at": firestore.SERVER_TIMESTAMP,
@@ -141,7 +130,10 @@ def _is_blocked_prompt(message: str, pattern: str) -> bool:
         return re.search(pattern, message) is not None
     except re.error:
         logging.warning(
-            msg={"event": "widget2agent_invalid_block_pattern", "payload": pattern}
+            msg={
+                "event": "widget_prompt_block_pattern_invalid",
+                "payload": pattern,
+            }
         )
         return False
 
@@ -194,7 +186,7 @@ def _parse_request_payload(
     data = request.get_json(silent=True) or {}
     logging.info(
         msg={
-            "event": "Widget webhook received.",
+            "event": "widget_request_received",
             "payload": data,
         }
     )
@@ -206,7 +198,7 @@ def _parse_request_payload(
     if _is_blocked_prompt(message, settings.BLOCKED_PROMPT_PATTERNS):
         logging.warning(
             msg={
-                "event": "widget2agent_blocked_prompt",
+                "event": "widget_prompt_blocked",
                 "payload": {"origin": request_origin},
             }
         )
@@ -228,7 +220,6 @@ def _parse_request_payload(
     context = WidgetRequestContext(
         message=message,
         session_id=session_id,
-        org_id=data.get("org_id") or "default_org",
         user_id=data.get("user_id") or "anonymous",
         metadata=data.get("metadata") or {},
         adk_user_id=session_id.replace("-", ""),
@@ -255,7 +246,7 @@ def _enforce_rate_limit(
 
     logging.warning(
         msg={
-            "event": "widget2agent_rate_limited",
+            "event": "widget_rate_limit_exceeded",
             "payload": {
                 "session_id": session_id,
                 "count": current_count,
@@ -263,9 +254,7 @@ def _enforce_rate_limit(
         }
     )
     return Response(
-        response=json.dumps(
-            {"error": "Rate limit exceeded. Please try again later."}
-        ),
+        response=json.dumps({"error": "Rate limit exceeded. Please try again later."}),
         status=429,
         content_type="application/json",
         headers=cors_headers(request_origin),
@@ -354,7 +343,6 @@ def widget2agent(request: Request) -> Response:
             collection=settings.FIRESTORE_COLLECTION,
             session_id=context.session_id,
             adk_user_id=context.adk_user_id,
-            org_id=context.org_id,
             settings=settings,
         )
 
@@ -363,7 +351,6 @@ def widget2agent(request: Request) -> Response:
             collection=settings.FIRESTORE_COLLECTION,
             session_id=context.session_id,
             engine_session_id=engine_session_id,
-            org_id=context.org_id,
             user_id=context.user_id,
             metadata=context.metadata,
         )
@@ -378,7 +365,7 @@ def widget2agent(request: Request) -> Response:
 
         logging.info(
             msg={
-                "event": "Got agent answer for widget",
+                "event": "widget_agent_answer_received",
                 "payload": {
                     "answer_preview": agent_response[:120],
                 },
@@ -401,7 +388,7 @@ def widget2agent(request: Request) -> Response:
     except Exception as e:
         logging.error(
             msg={
-                "event": "widget2agent_error",
+                "event": "widget_request_failed",
                 "payload": {
                     "error": str(e),
                     "traceback": traceback.format_exc(),
