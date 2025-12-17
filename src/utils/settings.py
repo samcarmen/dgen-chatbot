@@ -34,6 +34,8 @@ class Settings(BaseSettings):
         r"(?i)(ignore previous|system prompt|instructions above|"
         r"disregard|override|pretend to be|act as system|jailbreak)"
     )
+    SESSION_SIGNING_KEY: str
+    SESSION_TOKEN_TTL_SECONDS: int = 86400
     RATE_LIMIT_COLLECTION: str = "widget_rate_limits"
     RATE_LIMIT_MAX_REQUESTS: int = 30
     RATE_LIMIT_WINDOW_SECONDS: int = 60

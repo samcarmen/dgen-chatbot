@@ -45,9 +45,13 @@ config:
           FIRESTORE_COLLECTION: "widget_sessions"
           FIRESTORE_DATABASE: "chatbot-memory"
           ALLOWED_ORIGINS: https://dgentech-dev.netlify.app
+          SESSION_TOKEN_TTL_SECONDS: "86400"
         secret_environment_variables:
           - key: SMTP_PASSWORD
             secret: SMTP_PASSWORD
+            version: latest
+          - key: SESSION_SIGNING_KEY
+            secret: SESSION_SIGNING_KEY
             version: latest
         locations:
           - asia-southeast1

@@ -179,10 +179,7 @@ def send_escalation_email(
     logger.info(
         msg={
             "event": "escalation_email_invoked",
-            "payload": {
-                "user_email": masked_email,
-                "issue_summary": issue_summary,
-            },
+            "payload": {"user_email": masked_email},
         }
     )
 

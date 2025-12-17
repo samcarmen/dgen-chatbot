@@ -2,12 +2,13 @@ import json
 import logging
 import re
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Tuple
 from uuid import uuid4
 
 import functions_framework
+import jwt
 import vertexai
 from flask import Request, Response
 from google.cloud import firestore
@@ -27,11 +28,156 @@ class WidgetRequestContext:
     message: str
     session_id: str
     user_id: str
-    metadata: Dict[str, Any]
     adk_user_id: str
 
 
+def _sanitize_session_id(raw_id: str | None) -> str:
+    """Return a safe session ID or generate one if the input is invalid.
+
+    Args:
+        raw_id: Client-supplied session identifier.
+
+    Returns:
+        A validated session ID consisting of allowed characters, or a UUID4 string.
+    """
+    if raw_id and len(raw_id) <= 64 and re.fullmatch(r"[A-Za-z0-9_-]+", raw_id):
+        return raw_id
+    return str(uuid4())
+
+
+def _issue_session_token(
+    session_id: str,
+    user_id: str,
+    origin: str,
+    signing_key: str,
+    ttl_seconds: int,
+) -> str:
+    """Create a signed JWT for the session.
+
+    Args:
+        session_id: Server-issued session identifier.
+        user_id: Server-issued user identifier.
+        origin: Request origin to bind, if provided.
+        signing_key: Secret key for HMAC signing.
+        ttl_seconds: Token lifetime in seconds.
+
+    Returns:
+        A compact JWT string.
+    """
+    now = datetime.now(tz=timezone.utc)
+    payload: Dict[str, Any] = {
+        "sid": session_id,
+        "uid": user_id,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
+    }
+    if origin:
+        payload["origin"] = origin
+    return jwt.encode(payload, signing_key, algorithm="HS256")
+
+
+def _validate_session_token(
+    token: str, origin: str, signing_key: str
+) -> tuple[str, str] | None:
+    """Validate a session JWT and return the embedded session and user IDs.
+
+    Args:
+        token: Compact JWT from the client.
+        origin: Origin to verify against the token (if present).
+        signing_key: Secret key for HMAC verification.
+
+    Returns:
+        Tuple of session ID and user ID if valid; otherwise None.
+    """
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            signing_key,
+            algorithms=["HS256"],
+            options={"require": ["sid", "exp", "iat"]},
+        )
+    except jwt.InvalidTokenError:
+        return None
+
+    sid = payload.get("sid")
+    uid = payload.get("uid")
+    if not isinstance(sid, str) or not isinstance(uid, str):
+        return None
+    token_sid = _sanitize_session_id(sid)
+    token_uid = _sanitize_session_id(uid)
+
+    token_origin = payload.get("origin")
+    if token_origin and token_origin != origin:
+        return None
+
+    return token_sid, token_uid
+
+
+def _resolve_session(
+    context: WidgetRequestContext,
+    request: Request,
+    request_origin: str,
+    settings: Settings,
+) -> tuple[WidgetRequestContext, str]:
+    """Resolve or issue a session and token for the request.
+
+    Args:
+        context: Parsed request context from payload.
+        request: Incoming HTTP request.
+        request_origin: Origin header value.
+        settings: Application settings containing signing config.
+
+    Returns:
+        Tuple of updated context (with server session and user IDs) and the JWT token.
+    """
+    token = request.headers.get("X-Session-Token", "")
+    token_claims = _validate_session_token(
+        token=token,
+        origin=request_origin,
+        signing_key=settings.SESSION_SIGNING_KEY,
+    )
+
+    if token_claims:
+        token_sid, token_uid = token_claims
+        return (
+            replace(
+                context,
+                session_id=token_sid,
+                user_id=token_uid,
+                adk_user_id=token_sid.replace("-", ""),
+            ),
+            token,
+        )
+
+    new_session_id = str(uuid4())
+    new_user_id = str(uuid4())
+    new_token = _issue_session_token(
+        session_id=new_session_id,
+        user_id=new_user_id,
+        origin=request_origin,
+        signing_key=settings.SESSION_SIGNING_KEY,
+        ttl_seconds=settings.SESSION_TOKEN_TTL_SECONDS,
+    )
+    updated_context = replace(
+        context,
+        session_id=new_session_id,
+        user_id=new_user_id,
+        adk_user_id=new_session_id.replace("-", ""),
+    )
+    return updated_context, new_token
+
+
 def _parse_allowed_origins(settings: Settings) -> list[str]:
+    """Split and sanitize the allowed origins from settings.
+
+    Args:
+        settings: Application settings containing allowed origins string.
+
+    Returns:
+        A list of non-empty, stripped origins.
+    """
     return [
         origin.strip()
         for origin in settings.ALLOWED_ORIGINS.split(",")
@@ -40,6 +186,15 @@ def _parse_allowed_origins(settings: Settings) -> list[str]:
 
 
 def _build_cors_headers(allowed_origins: list[str], origin: str) -> Dict[str, str]:
+    """Build CORS headers for the request origin.
+
+    Args:
+        allowed_origins: List of allowed origins.
+        origin: Origin header value from the request.
+
+    Returns:
+        A dictionary of CORS headers to attach to the response.
+    """
     headers = {
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
@@ -58,6 +213,19 @@ def _get_or_create_engine_session(
     adk_user_id: str,
     settings: Settings,
 ) -> str:
+    """Fetch or create an agent engine session for a frontend session.
+
+    Args:
+        agent: Agent engine client.
+        db: Firestore client.
+        collection: Firestore collection name.
+        session_id: Frontend session identifier.
+        adk_user_id: Agent user ID derived from session.
+        settings: Application settings.
+
+    Returns:
+        The agent engine session ID.
+    """
     engine_session_id = lookup_session_id(
         db=db,
         collection=collection,
@@ -95,8 +263,16 @@ def _persist_session_mapping(
     session_id: str,
     engine_session_id: str,
     user_id: str,
-    metadata: Dict[str, Any],
 ) -> None:
+    """Persist the mapping of frontend session to engine session in Firestore.
+
+    Args:
+        db: Firestore client.
+        collection: Firestore collection name.
+        session_id: Frontend session identifier.
+        engine_session_id: Agent engine session identifier.
+        user_id: User identifier.
+    """
     create_or_update_document(
         db=db,
         collection=collection,
@@ -104,7 +280,6 @@ def _persist_session_mapping(
         payload={
             "engine_session_id": engine_session_id,
             "user_id": user_id,
-            "metadata": metadata,
             "updated_at": firestore.SERVER_TIMESTAMP,
             "expires_at": datetime.now(tz=timezone.utc) + timedelta(days=7),
         },
@@ -112,9 +287,14 @@ def _persist_session_mapping(
 
 
 def _sanitize_message(message: str, max_length: int) -> str:
-    """
-    Remove control characters (except whitespace), trim length, and strip.
-    This helps avoid control-byte abuse and oversized payloads.
+    """Remove control characters, trim length, and strip whitespace.
+
+    Args:
+        message: Incoming message text.
+        max_length: Maximum allowed length.
+
+    Returns:
+        A sanitized message string.
     """
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", message)
     cleaned = cleaned.strip()
@@ -124,6 +304,15 @@ def _sanitize_message(message: str, max_length: int) -> str:
 
 
 def _is_blocked_prompt(message: str, pattern: str) -> bool:
+    """Check if a message matches the blocked prompt regex.
+
+    Args:
+        message: Message content to evaluate.
+        pattern: Regex pattern of blocked prompts.
+
+    Returns:
+        True if the message is blocked; otherwise False.
+    """
     if not pattern:
         return False
     try:
@@ -144,6 +333,17 @@ def _validate_origin_and_method(
     allowed_origins: list[str],
     cors_headers: Callable[[str], Dict[str, str]],
 ) -> Response | None:
+    """Validate Origin and HTTP method and return an early response if invalid.
+
+    Args:
+        request: Incoming HTTP request.
+        request_origin: Origin header value.
+        allowed_origins: List of allowed origins.
+        cors_headers: Function to build CORS headers.
+
+    Returns:
+        A Response if the request is invalid; otherwise None.
+    """
     if not request_origin:
         return Response(
             response=json.dumps({"error": "Origin required"}),
@@ -183,13 +383,19 @@ def _parse_request_payload(
     request_origin: str,
     cors_headers: Callable[[str], Dict[str, str]],
 ) -> Tuple[WidgetRequestContext | None, Response | None]:
+    """Parse and validate the incoming widget payload.
+
+    Args:
+        request: Incoming HTTP request.
+        settings: Application settings.
+        request_origin: Origin header value.
+        cors_headers: Function to build CORS headers.
+
+    Returns:
+        Tuple of context (or None) and an error response (or None).
+    """
     data = request.get_json(silent=True) or {}
-    logging.info(
-        msg={
-            "event": "widget_request_received",
-            "payload": data,
-        }
-    )
+    logging.info(msg={"event": "widget_request_received"})
 
     message: str = _sanitize_message(
         message=data.get("message") or "",
@@ -216,13 +422,11 @@ def _parse_request_payload(
             headers=cors_headers(request_origin),
         )
 
-    session_id: str = data.get("session_id") or str(uuid4())
     context = WidgetRequestContext(
         message=message,
-        session_id=session_id,
-        user_id=data.get("user_id") or "anonymous",
-        metadata=data.get("metadata") or {},
-        adk_user_id=session_id.replace("-", ""),
+        session_id="",
+        user_id="",
+        adk_user_id="",
     )
     return context, None
 
@@ -233,11 +437,31 @@ def _enforce_rate_limit(
     session_id: str,
     cors_headers: Callable[[str], Dict[str, str]],
     request_origin: str,
+    request: Request,
 ) -> Response | None:
+    """Enforce per-session + IP rate limiting and return 429 if exceeded.
+
+    Args:
+        db: Firestore client.
+        settings: Application settings.
+        session_id: Session identifier.
+        cors_headers: Function to build CORS headers.
+        request_origin: Origin header value.
+        request: Incoming HTTP request.
+
+    Returns:
+        A 429 response if limited; otherwise None.
+    """
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or request.remote_addr
+        or "unknown"
+    )
+    rate_limit_key = f"{session_id}:{client_ip}"
     allowed, current_count = check_rate_limit(
         db=db,
         collection=settings.RATE_LIMIT_COLLECTION,
-        key=session_id,
+        key=rate_limit_key,
         window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS,
         max_requests=settings.RATE_LIMIT_MAX_REQUESTS,
     )
@@ -264,6 +488,17 @@ def _enforce_rate_limit(
 def _extract_agent_answer(
     agent: Any, adk_user_id: str, engine_session_id: str, message: str
 ) -> str:
+    """Stream agent response and return the latest text chunk.
+
+    Args:
+        agent: Agent engine client.
+        adk_user_id: Agent user ID.
+        engine_session_id: Agent engine session identifier.
+        message: User message to send.
+
+        Returns:
+            The latest text content from the streamed response.
+    """
     agent_response = ""
     for event in agent.stream_query(  # pyright: ignore
         user_id=adk_user_id, session_id=engine_session_id, message=message
@@ -278,7 +513,14 @@ def _extract_agent_answer(
 
 @functions_framework.http
 def widget2agent(request: Request) -> Response:
-    """HTTP endpoint for web chat widget → Vertex AI Agent Engine."""
+    """Handle widget POSTs to query the Vertex AI Agent Engine.
+
+    Args:
+        request: Flask request containing the widget message and session info.
+
+    Returns:
+        A Flask Response with the agent answer, session identifiers, or an error.
+    """
     settings = Settings()
     allowed_origins = _parse_allowed_origins(settings)
     request_origin = request.headers.get("Origin", "")
@@ -309,7 +551,13 @@ def widget2agent(request: Request) -> Response:
         )
         if payload_error_response:
             return payload_error_response
-        assert context  # for type checkers
+        assert context
+        context, session_token = _resolve_session(
+            context=context,
+            request=request,
+            request_origin=request_origin,
+            settings=settings,
+        )
 
         # ---- Firestore: rate limit per session
         db = firestore.Client(
@@ -322,6 +570,7 @@ def widget2agent(request: Request) -> Response:
             session_id=context.session_id,
             cors_headers=cors_headers,
             request_origin=request_origin,
+            request=request,
         )
         if rate_limit_response:
             return rate_limit_response
@@ -352,7 +601,6 @@ def widget2agent(request: Request) -> Response:
             session_id=context.session_id,
             engine_session_id=engine_session_id,
             user_id=context.user_id,
-            metadata=context.metadata,
         )
 
         # ---- Query Agent Engine
@@ -374,6 +622,7 @@ def widget2agent(request: Request) -> Response:
 
         response_body = {
             "session_id": context.session_id,
+            "session_token": session_token,
             "agent_session_id": engine_session_id,
             "answer": agent_response,
         }

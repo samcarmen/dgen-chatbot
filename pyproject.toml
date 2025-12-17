@@ -20,6 +20,7 @@ dependencies = [
     "litellm>=1.80.0",
     "pydantic-settings>=2.9.1",
     "requests>=2.32.4",
+    "pyjwt>=2.10.0",
 ]
 
 [dependency-groups]
