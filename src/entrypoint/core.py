@@ -197,7 +197,7 @@ def _build_cors_headers(allowed_origins: list[str], origin: str) -> Dict[str, st
     """
     headers = {
         "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+        "Access-Control-Allow-Headers": "Content-Type, X-API-Key, X-Session-Token",
         "Access-Control-Max-Age": "3600",
     }
     if origin and origin in allowed_origins:
