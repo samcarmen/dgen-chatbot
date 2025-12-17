@@ -1,3 +1,4 @@
+import html
 import json
 import logging
 import re
@@ -51,6 +52,8 @@ def _issue_session_token(
     origin: str,
     signing_key: str,
     ttl_seconds: int,
+    issuer: str,
+    audience: str,
 ) -> str:
     """Create a signed JWT for the session.
 
@@ -60,6 +63,8 @@ def _issue_session_token(
         origin: Request origin to bind, if provided.
         signing_key: Secret key for HMAC signing.
         ttl_seconds: Token lifetime in seconds.
+        issuer: Token issuer claim.
+        audience: Token audience claim.
 
     Returns:
         A compact JWT string.
@@ -70,6 +75,8 @@ def _issue_session_token(
         "uid": user_id,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
+        "iss": issuer,
+        "aud": audience,
     }
     if origin:
         payload["origin"] = origin
@@ -77,17 +84,19 @@ def _issue_session_token(
 
 
 def _validate_session_token(
-    token: str, origin: str, signing_key: str
-) -> tuple[str, str] | None:
+    token: str, origin: str, signing_key: str, issuer: str, audience: str
+) -> tuple[str, str, int] | None:
     """Validate a session JWT and return the embedded session and user IDs.
 
     Args:
         token: Compact JWT from the client.
         origin: Origin to verify against the token (if present).
         signing_key: Secret key for HMAC verification.
+        issuer: Expected issuer claim.
+        audience: Expected audience claim.
 
     Returns:
-        Tuple of session ID and user ID if valid; otherwise None.
+        Tuple of session ID, user ID, and expiry timestamp if valid; otherwise None.
     """
     if not token:
         return None
@@ -96,14 +105,17 @@ def _validate_session_token(
             token,
             signing_key,
             algorithms=["HS256"],
-            options={"require": ["sid", "exp", "iat"]},
+            options={"require": ["sid", "exp", "iat", "iss", "aud"]},
+            issuer=issuer,
+            audience=audience,
         )
     except jwt.InvalidTokenError:
         return None
 
     sid = payload.get("sid")
     uid = payload.get("uid")
-    if not isinstance(sid, str) or not isinstance(uid, str):
+    exp = payload.get("exp")
+    if not isinstance(sid, str) or not isinstance(uid, str) or not isinstance(exp, int):
         return None
     token_sid = _sanitize_session_id(sid)
     token_uid = _sanitize_session_id(uid)
@@ -112,7 +124,7 @@ def _validate_session_token(
     if token_origin and token_origin != origin:
         return None
 
-    return token_sid, token_uid
+    return token_sid, token_uid, exp
 
 
 def _resolve_session(
@@ -137,10 +149,27 @@ def _resolve_session(
         token=token,
         origin=request_origin,
         signing_key=settings.SESSION_SIGNING_KEY,
+        issuer=settings.SESSION_TOKEN_ISSUER,
+        audience=settings.SESSION_TOKEN_AUDIENCE,
     )
 
     if token_claims:
-        token_sid, token_uid = token_claims
+        token_sid, token_uid, token_exp = token_claims
+        now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+        should_refresh = (
+            token_exp - now_ts < settings.SESSION_TOKEN_REFRESH_THRESHOLD_SECONDS
+        )
+        new_token = token
+        if should_refresh:
+            new_token = _issue_session_token(
+                session_id=token_sid,
+                user_id=token_uid,
+                origin=request_origin,
+                signing_key=settings.SESSION_SIGNING_KEY,
+                ttl_seconds=settings.SESSION_TOKEN_TTL_SECONDS,
+                issuer=settings.SESSION_TOKEN_ISSUER,
+                audience=settings.SESSION_TOKEN_AUDIENCE,
+            )
         return (
             replace(
                 context,
@@ -148,7 +177,7 @@ def _resolve_session(
                 user_id=token_uid,
                 adk_user_id=token_sid.replace("-", ""),
             ),
-            token,
+            new_token,
         )
 
     new_session_id = str(uuid4())
@@ -159,6 +188,8 @@ def _resolve_session(
         origin=request_origin,
         signing_key=settings.SESSION_SIGNING_KEY,
         ttl_seconds=settings.SESSION_TOKEN_TTL_SECONDS,
+        issuer=settings.SESSION_TOKEN_ISSUER,
+        audience=settings.SESSION_TOKEN_AUDIENCE,
     )
     updated_context = replace(
         context,
@@ -287,7 +318,7 @@ def _persist_session_mapping(
 
 
 def _sanitize_message(message: str, max_length: int) -> str:
-    """Remove control characters, trim length, and strip whitespace.
+    """Remove control characters, trim length, escape HTML, and strip whitespace.
 
     Args:
         message: Incoming message text.
@@ -297,9 +328,12 @@ def _sanitize_message(message: str, max_length: int) -> str:
         A sanitized message string.
     """
     cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", message)
+    cleaned = "".join(ch for ch in cleaned if ch.isprintable())
+    cleaned = re.sub(r"<[^>]+>", "", cleaned)
     cleaned = cleaned.strip()
     if len(cleaned) > max_length:
         cleaned = cleaned[:max_length]
+    cleaned = html.escape(cleaned, quote=False)
     return cleaned
 
 
@@ -452,11 +486,8 @@ def _enforce_rate_limit(
     Returns:
         A 429 response if limited; otherwise None.
     """
-    client_ip = (
-        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        or request.remote_addr
-        or "unknown"
-    )
+    xff = request.headers.get("X-Forwarded-For", "")
+    client_ip = xff.split(",")[0].strip() if xff else (request.remote_addr or "unknown")
     rate_limit_key = f"{session_id}:{client_ip}"
     allowed, current_count = check_rate_limit(
         db=db,

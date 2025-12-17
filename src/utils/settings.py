@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     )
     SESSION_SIGNING_KEY: str
     SESSION_TOKEN_TTL_SECONDS: int = 86400
+    SESSION_TOKEN_REFRESH_THRESHOLD_SECONDS: int = 900
+    SESSION_TOKEN_ISSUER: str = "dgen-entrypoint"
+    SESSION_TOKEN_AUDIENCE: str = "widget2agent"
     RATE_LIMIT_COLLECTION: str = "widget_rate_limits"
     RATE_LIMIT_MAX_REQUESTS: int = 30
     RATE_LIMIT_WINDOW_SECONDS: int = 60
