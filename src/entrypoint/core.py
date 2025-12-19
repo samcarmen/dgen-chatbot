@@ -600,6 +600,7 @@ def widget2agent(request: Request) -> Response:
                 content_type="application/json",
                 headers=cors_headers(request_origin),
             )
+
         context, session_token = _resolve_session(
             context=context,
             request=request,
