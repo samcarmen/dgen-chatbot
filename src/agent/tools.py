@@ -190,7 +190,7 @@ def send_escalation_email(
     )
 
     EMAIL_FROM = "no-reply@dgentech.io"
-    EMAIL_TO = "support@dgentech.io"
+    EMAIL_TO = "carmen.samkahman@gmail.com"
 
     SMTP_HOST = os.environ["SMTP_HOST"]
     SMTP_PORT = int(os.environ["SMTP_PORT"])
