@@ -1,0 +1,133 @@
+name: Dev Deploy
+run-name: Deploy to dev
+on:
+  pull_request:
+    types: [labeled]
+jobs:
+  deploy-agent:
+    if: ${{ github.event.label.name == 'dev deploy agent' }}
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - name: "Check out GitHub repository"
+        uses: actions/checkout@v4
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: "Set up uv"
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.7.8
+
+      - name: "Authenticate Google Cloud"
+        uses: "google-github-actions/auth@v3"
+        with:
+          token_format: "access_token"
+          workload_identity_provider: "projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
+
+      - name: "Get secrets from Secret Manager"
+        id: secrets
+        uses: google-github-actions/get-secretmanager-secrets@v2
+        with:
+          secrets: |
+            SMTP_PASSWORD:projects/${{ vars.GCP_PROJECT_ID }}/secrets/SMTP_PASSWORD/versions/latest
+      
+      - name: "Install dependencies"
+        run: uv sync --frozen
+
+      - name: "Deploy agent engine"
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          GCP_PROJECT_NUMBER: ${{ secrets.GCP_PROJECT_NUMBER }}
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GOOGLE_CLOUD_LOCATION: ${{ vars.AGENT_ENGINE_LOCATION }}
+          VERTEX_ENGINE_STAGING_BUCKET: ${{ vars.GCP_VERTEX_ENGINE_BUCKET }}
+          SMTP_HOST: "smtp.sendgrid.net"
+          SMTP_PORT: 587
+          SMTP_USER: apikey
+          SMTP_PASSWORD: ${{ steps.secrets.outputs.SMTP_PASSWORD }}
+        run: |
+          uv run --no-sync python deployment/agent/core.py --action=up
+
+  deploy-cloud-run:
+    if: ${{ github.event.label.name == 'dev deploy cloud function' }}
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - name: "Check out GitHub repository"
+        uses: actions/checkout@v4
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: "Set up uv"
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: 0.7.8
+
+      - name: "Authenticate Google Cloud"
+        uses: "google-github-actions/auth@v3"
+        with:
+          token_format: "access_token"
+          workload_identity_provider: "projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-actions@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
+
+      - name: "Authenticate Google Artifact Registry"
+        run: |
+          gcloud auth configure-docker asia-southeast1-docker.pkg.dev
+
+      - name: "Configure version"
+        id: configure_version
+        run: |
+          TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
+          BRANCH=${GITHUB_REF_NAME//[\/-]/_}
+          VERSION=${BRANCH}-${TIMESTAMP}
+
+          echo VERSION $VERSION
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: "Update Pulumi"
+        uses: pulumi/actions@v6
+        with:
+          pulumi-version: 3.191.0
+
+      - name: "Initialize Pulumi components: entrypoint"
+        working-directory: ./deployment/entrypoint
+        run: |
+          bash copy.sh
+          uv export --frozen --no-default-groups --no-hashes --no-annotate --no-header --no-editable --no-emit-workspace --format=requirements.txt --output-file=./temp/requirements.txt
+          cd pulumi && pulumi install
+
+      - name: "Provision project: entrypoint"
+        uses: pulumi/actions@v6
+        env:
+          GCP_PROJECT_NUMBER: ${{ secrets.GCP_PROJECT_NUMBER }}
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          VERSION: ${{ steps.configure_version.outputs.VERSION }}
+        with:
+          command: up
+          cloud-url: gs://${{ vars.PULUMI_BUCKET }}/entrypoint
+          work-dir: ./deployment/entrypoint/pulumi
+          stack-name: organization/entrypoint/${{ vars.ENVIRONMENT }}
+          upsert: true
+          comment-on-pr: true
+          edit-pr-comment: false
+          refresh: true
+          config-map: |
+            {
+              input:version: { value: ${{ env.VERSION }}, secret: false },
+            }

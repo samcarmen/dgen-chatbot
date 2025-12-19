@@ -1,0 +1,59 @@
+config:
+  gcp:project: dgen-chatbot
+  input:bucket: pulumi-dgen
+  input:resource:
+    service_account:
+      account_id: cloud-func-agent-entrypoint
+      description: Service account for agent entrypoint cloud functions
+      display_name: cloud-func-agent-entrypoint
+      roles:
+        - roles/logging.logWriter
+        - roles/secretmanager.secretAccessor
+        - roles/run.invoker
+        - roles/aiplatform.user
+        - roles/datastore.user
+    artifact_registry:
+      cleanup_policy_dry_run: false
+      cleanup_policies:
+        - action: DELETE
+          id: delete-prerelease
+          condition:
+            older_than: 2592000s
+        - action: KEEP
+          id: keep-minimum-versions
+          most_recent_versions:
+            keep_count: 10
+      description: Artifact registry for storing agent entrypoint cloud functions code
+      format: DOCKER
+      locations:
+        - asia-southeast1
+      repository_id: dgen-entrypoint-cf
+    cloud_functions:
+      - name: widget2agent
+        description: "Deploys a Cloud Function that processes messages by invoking an agent to generate and return an LLM response."
+        runtime: python313
+        available_cpu: 1
+        available_memory_mb: 1Gi
+        entry_point: widget2agent
+        min_instance_count: 1
+        max_instance_count: 100
+        timeout: 300
+        environment_variables:
+          AGENT_ENGINE_BUCKET: "dgen-agent-engine"
+          AGENT_ENGINE_REGION: "us-central1"
+          AGENT_ENGINE_RESOURCE_NUM: "8181998185909059584"
+          FIRESTORE_COLLECTION: "widget_sessions"
+          FIRESTORE_DATABASE: "chatbot-memory"
+          ALLOWED_ORIGINS: https://dgentech-dev.netlify.app
+          SESSION_TOKEN_TTL_SECONDS: "86400"
+        secret_environment_variables:
+          - key: SMTP_PASSWORD
+            secret: SMTP_PASSWORD
+            version: latest
+          - key: SESSION_SIGNING_KEY
+            secret: SESSION_SIGNING_KEY
+            version: latest
+        locations:
+          - asia-southeast1
+  input:environment: dev
+  label:component: agent
