@@ -14,9 +14,7 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools import BaseTool
 from google.cloud import logging as cloud_logging
 
-cloud_logging.Client().setup_logging()
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 def validate_email(email: str) -> str:
@@ -174,6 +172,8 @@ def send_escalation_email(
     Returns:
         A confirmation or error message for LLM as tool output.
     """
+    cloud_logging.Client().setup_logging()
+
     sanitized_email = validate_email(user_email)
     masked_email = _mask_email(sanitized_email)
     logger.info(

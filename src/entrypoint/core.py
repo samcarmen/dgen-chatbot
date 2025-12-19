@@ -582,7 +582,24 @@ def widget2agent(request: Request) -> Response:
         )
         if payload_error_response:
             return payload_error_response
-        assert context
+        if not context:
+            logging.error(
+                msg={
+                    "event": "widget_request_failed",
+                    "payload": {"error": "Missing parsed request context"},
+                }
+            )
+            return Response(
+                response=json.dumps(
+                    {
+                        "error": "Internal Error",
+                        "detail": "Unexpected error in widget2agent",
+                    }
+                ),
+                status=500,
+                content_type="application/json",
+                headers=cors_headers(request_origin),
+            )
         context, session_token = _resolve_session(
             context=context,
             request=request,
@@ -642,14 +659,7 @@ def widget2agent(request: Request) -> Response:
             message=context.message,
         )
 
-        logging.info(
-            msg={
-                "event": "widget_agent_answer_received",
-                "payload": {
-                    "answer_preview": agent_response[:120],
-                },
-            }
-        )
+        logging.info(msg={"event": "widget_agent_answer_received"})
 
         response_body = {
             "session_id": context.session_id,
@@ -666,13 +676,14 @@ def widget2agent(request: Request) -> Response:
         )
 
     except Exception as e:
+        error_payload = {"error": str(e)}
+        if settings.ENVIRONMENT.lower() == "dev":
+            error_payload["traceback"] = traceback.format_exc()
+
         logging.error(
             msg={
                 "event": "widget_request_failed",
-                "payload": {
-                    "error": str(e),
-                    "traceback": traceback.format_exc(),
-                },
+                "payload": error_payload,
             }
         )
         return Response(
