@@ -5,7 +5,7 @@ from .prompts import INSTRUCTION
 from .tools import before_tool, send_escalation_email
 
 root_agent = Agent(
-    model="gemini-2.5-flash",
+    model="gemini-3.1-flash-lite",
     name="dgen_agent",
     instruction=INSTRUCTION,
     tools=[send_escalation_email],
